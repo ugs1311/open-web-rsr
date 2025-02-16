@@ -1,0 +1,3 @@
+ollama  
+flask  # or any other required libraries  
+requests
