@@ -1,0 +1,76 @@
+pipeline {
+    agent any
+
+    parameters {
+        string(name: 'GITHUB_REPO', defaultValue: 'your-github-repo-url', description: 'GitHub Repository URL')
+        string(name: 'GITHUB_TOKEN', defaultValue: 'your-github-token', description: 'GitHub Personal Access Token')
+        string(name: 'DOCKERHUB_USERNAME', defaultValue: 'your-dockerhub-username', description: 'Docker Hub Username')
+        string(name: 'DOCKERHUB_PASSWORD', defaultValue: 'your-dockerhub-password', description: 'Docker Hub Password')
+        string(name: 'MINKUBE_NAMESPACE', defaultValue: 'default', description: 'Minkube Namespace')
+    }
+
+    environment {
+        // Define environment variables here - useful for consistency
+        GITHUB_URL = "${params.GITHUB_REPO}"
+        DOCKERHUB_URL = "https://hub.docker.com/"
+    }
+
+    stages {
+        stage('Checkout Source') {
+            steps {
+                git credentialsId: 'your-git-credentials-id', url: "${params.GITHUB_URL}", branch: 'main' // Adjust branch as needed
+            }
+        }
+
+        stage('Testing') {
+            steps {
+                sh 'mvn clean install' // Or your testing command
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh 'docker build -t your-docker-image-name .'
+            }
+        }
+
+        stage('Test Docker Image') {
+            steps {
+                sh 'docker run -t your-docker-image-name' // Run a test command inside the container
+            }
+        }
+
+        stage('Upload to Docker Hub') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DOCKERHUB_USERNAME', passwordVariable: 'DOCKERHUB_PASSWORD')]) {
+                    sh "docker login -u ${DOCKERHUB_USERNAME} -p ${DOCKERHUB_PASSWORD}"
+                    sh "docker push your-docker-image-name"
+                }
+            }
+        }
+
+        stage('Deploy to Minkube') {
+            steps {
+                // Assuming you have ArgoCD configured and running
+                sh 'argo apply -n ${params.MINKUBE_NAMESPACE} --prune'
+            }
+        }
+
+        stage('Testing After Deployment') {
+            steps {
+                // Add your testing steps here - e.g., access the application in Minkube and run tests
+                sh 'echo "Testing after deployment..."'
+            }
+        }
+    }
+
+    post {
+        // Optional: Post-build actions
+        success {
+            echo 'Pipeline completed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed!'
+        }
+    }
+}
