@@ -3,6 +3,15 @@ pipeline {
 
     parameters {
         string(name: 'BRANCH_NAME', defaultValue: 'master')
+        choice(name: 'ENVIRONMENT', choices: ['dev', 'staging', 'prod'], description: 'בחר סביבת ריצה')
+    }
+
+    environment {
+        DOCKER_IMAGE = 'open-web-rsr'
+        DOCKER_TAG = "${BUILD_NUMBER}"
+        VENV_DIR = "${WORKSPACE}/venv"
+        OLLAMA_PORT = '11010'
+        WEBUI_PORT = '5000'
     }
 
     stages {
@@ -12,64 +21,98 @@ pipeline {
             }
         }
 
-        stage('Syntax Check') {
-            steps {
-                sh 'python -m pylint --disable=C1001,C0103,C0114,W0105 *.py'
-            }
-        }
-
-        stage('Functional Test') {
-            steps {
-                sh 'python -m pytest'
-            }
-        }
-
-        stage('Build Docker Image') {
+        stage('Setup Python Environment') {
             steps {
                 script {
-                    docker.withRegistry('https://index.docker.io/v1/', credentialsId: '<credentials_id>') {
-                        def image = docker.build('<image_name>', '<context_directory>')
-                    }
-                }
-            }
-        }
-
-        stage('Push Docker Image') {
-            steps {
-                script {
-                    docker.withRegistry('https://index.docker.io/v1/', credentialsId: '<credentials_id>') {
-                        def image = docker.image('<image_name>')
-                        image.push()
-                    }
-                }
-            }
-        }
-
-        stage('Create Virtual Environment') {
-            steps {
-                script {
-                    def venv_dir = '/path/to/venv'
-                    sh "python3 -m venv ${venv_dir}"
-                    withEnv(["VIRTUAL_ENV=${venv_dir}", "PATH=${venv_dir}/bin:${env.PATH}"]) {
+                    sh "python3 -m venv ${VENV_DIR}"
+                    withEnv(["VIRTUAL_ENV=${VENV_DIR}", "PATH=${VENV_DIR}/bin:${env.PATH}"]) {
+                        sh 'pip install --upgrade pip'
                         sh 'pip install -r requirements.txt'
                     }
                 }
             }
         }
 
-        stage('Run Ollama and OPEW-WEBUI') {
+        stage('Code Quality') {
             steps {
                 script {
-                    sh 'ollama --model llama.bin --port 11010 &'
-                    sh 'opew-webui --port 5000 --llamac_host localhost --llamac_port 11010 &'
+                    withEnv(["VIRTUAL_ENV=${VENV_DIR}", "PATH=${VENV_DIR}/bin:${env.PATH}"]) {
+                        sh 'python -m pylint --disable=C1001,C0103,C0114,W0105 *.py'
+                        sh 'python -m pytest --junitxml=test-results.xml'
+                    }
+                }
+            }
+        }
+
+        stage('Build and Push Docker') {
+            when {
+                expression { params.ENVIRONMENT != 'dev' }
+            }
+            steps {
+                script {
+                    docker.withRegistry('https://index.docker.io/v1/', credentialsId: 'docker-hub-credentials') {
+                        def image = docker.build("${DOCKER_IMAGE}:${DOCKER_TAG}", '.')
+                        image.push()
+                        image.tag("${DOCKER_IMAGE}:latest")
+                        image.push()
+                    }
+                }
+            }
+        }
+
+        stage('Deploy') {
+            when {
+                expression { params.ENVIRONMENT != 'dev' }
+            }
+            steps {
+                script {
+                    // כאן יש להוסיף את הלוגיקה של הדיפלוי בהתאם לסביבה
+                    echo "Deploying to ${params.ENVIRONMENT} environment"
+                }
+            }
+        }
+
+        stage('Run Services') {
+            steps {
+                script {
+                    // הפעלת Ollama
+                    sh "ollama --model llama.bin --port ${OLLAMA_PORT} &"
+                    sleep(5) // המתנה שהשירות יעלה
+                    
+                    // הפעלת Web UI
+                    sh "opew-webui --port ${WEBUI_PORT} --llamac_host localhost --llamac_port ${OLLAMA_PORT} &"
+                    sleep(5) // המתנה שהשירות יעלה
+                    
+                    // בדיקה שהשירותים עובדים
+                    sh "curl -f http://localhost:${WEBUI_PORT}/health || exit 1"
                 }
             }
         }
 
         stage('Approval') {
-            steps {
-                input(message: 'Please approve the changes.')
+            when {
+                expression { params.ENVIRONMENT == 'prod' }
             }
+            steps {
+                input(message: 'אנא אשר את הדיפלוי לסביבת הייצור')
+            }
+        }
+    }
+
+    post {
+        always {
+            // ניקוי תהליכים
+            sh "pkill -f ollama || true"
+            sh "pkill -f opew-webui || true"
+            
+            // שמירת תוצאות הבדיקות
+            junit 'test-results.xml'
+        }
+        success {
+            echo 'התהליך הושלם בהצלחה!'
+        }
+        failure {
+            echo 'התהליך נכשל!'
         }
     }
 }
