@@ -30,6 +30,23 @@ jenkins:
               - "Overall/Read"
               - "Job/Read"
 
+  credentials:
+    system:
+      domainCredentials:
+        - credentials:
+            - usernamePassword:
+                scope: GLOBAL
+                id: "github-credentials"
+                username: "${GITHUB_USERNAME}"
+                password: "${GITHUB_TOKEN}"
+            - sshUserPrivateKey:
+                scope: GLOBAL
+                id: "github-ssh-key"
+                username: "${GITHUB_USERNAME}"
+                privateKeySource:
+                  directEntry:
+                    privateKey: "${GITHUB_SSH_KEY}"
+
   jobs:
     - name: "open-web-rsr"
       type: "multibranch"
@@ -40,6 +57,7 @@ jenkins:
             repository: "open-web-rsr"
             credentialsId: "github-credentials"
             scanCredentialsId: "github-credentials"
+            apiUri: "https://api.github.com"
             traits:
               - gitHubBranchDiscovery:
                   strategyId: 1
@@ -50,6 +68,10 @@ jenkins:
                   trust: "TrustEveryone"
               - gitHubTopicsDiscovery:
                   strategyId: 1
+              - gitHubApiRateLimit:
+                  maxRequestsPerHour: 5000
+                  maxRequestsPerMinute: 30
+                  maxRequestsPerSecond: 1
       
       triggers:
         - periodic: "H * * * *"
@@ -67,6 +89,9 @@ jenkins:
             - text:
                 variable: "ARGOCD_CREDENTIALS"
                 credentialsId: "argocd-credentials"
+            - text:
+                variable: "GITHUB_TOKEN"
+                credentialsId: "github-credentials"
       
       postBuild:
         - archive:
