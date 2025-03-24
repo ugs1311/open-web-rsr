@@ -1,0 +1,140 @@
+jenkins:
+  systemMessage: "Open Web RSR - Jenkins Configuration"
+  
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "admin"
+          password: "${JENKINS_ADMIN_PASSWORD}"
+  
+  authorizationStrategy:
+    roleBased:
+      roles:
+        global:
+          - name: "admin"
+            description: "Jenkins administrators"
+            permissions:
+              - "Overall/Administer"
+          - name: "developer"
+            description: "Developers"
+            permissions:
+              - "Overall/Read"
+              - "Job/Build"
+              - "Job/Cancel"
+              - "Job/Read"
+              - "Job/Workspace"
+          - name: "viewer"
+            description: "Viewers"
+            permissions:
+              - "Overall/Read"
+              - "Job/Read"
+
+  jobs:
+    - name: "open-web-rsr"
+      type: "multibranch"
+      description: "Open Web RSR - Multi Branch Pipeline"
+      branchSources:
+        - github:
+            repoOwner: "ugs1311"
+            repository: "open-web-rsr"
+            credentialsId: "github-credentials"
+            scanCredentialsId: "github-credentials"
+            traits:
+              - gitHubBranchDiscovery:
+                  strategyId: 1
+              - gitHubPullRequestDiscovery:
+                  strategyId: 1
+              - gitHubForkDiscovery:
+                  strategyId: 1
+                  trust: "TrustEveryone"
+              - gitHubTopicsDiscovery:
+                  strategyId: 1
+      
+      triggers:
+        - periodic: "H * * * *"
+        - githubPush()
+      
+      buildEnvironment:
+        - deleteWorkspaceBeforeBuild: true
+        - credentialsBinding:
+            - text:
+                variable: "DOCKER_CREDENTIALS"
+                credentialsId: "docker-hub-credentials"
+            - file:
+                variable: "KUBERNETES_CONFIG"
+                credentialsId: "k8s-config"
+            - text:
+                variable: "ARGOCD_CREDENTIALS"
+                credentialsId: "argocd-credentials"
+      
+      postBuild:
+        - archive:
+            artifacts: "target/*.jar,test-results.xml,coverage.xml"
+        - junit:
+            testResults: "test-results.xml"
+        - cobertura:
+            coberturaReportFile: "coverage.xml"
+      
+      branchDefaults:
+        buildStrategies:
+          - skipInitialBuildOnFirstBranchIndexing: true
+          - skipAutomaticTriggering: false
+          - skipWhenEmpty: true
+      
+      orphanedItemStrategy:
+        discardOldItems:
+          daysToKeepStr: "7"
+          numToKeepStr: "5"
+      
+      healthMetrics:
+        buildStability:
+          warningThreshold: 80
+          unstableThreshold: 60
+        timeSinceLastSuccess:
+          warningThreshold: 24
+          unstableThreshold: 48
+      
+      notifications:
+        email:
+          recipients: "team@example.com"
+          sendToIndividuals: true
+        slack:
+          channel: "#jenkins-builds"
+          notifyOn:
+            - "FAILURE"
+            - "RECOVERY"
+            - "PULL_REQUEST"
+      
+      performance:
+        parallelBuilds: true
+        maxParallelBuilds: 3
+        lightweightCheckout: false
+        workspaceCleanup: true
+      
+      monitoring:
+        prometheus:
+          enabled: true
+        grafana:
+          enabled: true
+        buildTimeTracking:
+          enabled: true
+        resourceUsageTracking:
+          enabled: true
+
+      # הגדרות נוספות לפתרון הבעיה
+      pipelineConfig:
+        scriptPath: "jenkins/Jenkinsfile"
+        lightweight: false
+        sandbox: false
+      
+      # הגדרות GitHub API
+      githubApi:
+        rateLimit:
+          enabled: true
+          maxRequestsPerHour: 5000
+          maxRequestsPerMinute: 30
+          maxRequestsPerSecond: 1
+        credentials:
+          - id: "github-credentials"
+            description: "GitHub API credentials" 
