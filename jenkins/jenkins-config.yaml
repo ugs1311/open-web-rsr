@@ -39,6 +39,7 @@ jenkins:
                 id: "github-credentials"
                 username: "${GITHUB_USERNAME}"
                 password: "${GITHUB_TOKEN}"
+                description: "GitHub API Token"
             - sshUserPrivateKey:
                 scope: GLOBAL
                 id: "github-ssh-key"
@@ -72,6 +73,8 @@ jenkins:
                   maxRequestsPerHour: 5000
                   maxRequestsPerMinute: 30
                   maxRequestsPerSecond: 1
+              - gitHubPrivateRepository:
+                  enabled: true
       
       triggers:
         - periodic: "H * * * *"
