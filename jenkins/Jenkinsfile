@@ -1,9 +1,10 @@
-def label = "worker-${UUID.randomUUID().toString()}"
+def call() {
+    def label = "worker-${UUID.randomUUID().toString()}"
 
-pipeline {
-    agent {
-        kubernetes {
-            yaml """
+    pipeline {
+        agent {
+            kubernetes {
+                yaml """
 apiVersion: v1
 kind: Pod
 metadata:
@@ -52,93 +53,96 @@ spec:
     secret:
       secretName: kubeconfig-secret
 """
-        }
-    }
-
-    environment {
-        DOCKER_REGISTRY = 'docker.io'
-        IMAGE_NAME = 'open-web-rsr'
-        IMAGE_TAG = "${BUILD_NUMBER}"
-        ARGOCD_SERVER = 'argocd-server.argocd.svc.cluster.local'
-        GITHUB_CREDS = credentials('github-credentials')
-        DOCKER_CREDS = credentials('docker-hub-credentials')
-        ARGOCD_CREDS = credentials('argocd-credentials')
-    }
-
-    stages {
-        stage('Checkout') {
-            steps {
-                checkout scm
             }
         }
 
-        stage('Test') {
-            steps {
-                container('python') {
-                    sh '''
-                        python -m pip install --upgrade pip
-                        pip install -r requirements.txt
-                        python -m pytest tests/ --junitxml=test-results.xml
-                    '''
+        environment {
+            DOCKER_REGISTRY = 'docker.io'
+            IMAGE_NAME = 'open-web-rsr'
+            IMAGE_TAG = "${BUILD_NUMBER}"
+            ARGOCD_SERVER = 'argocd-server.argocd.svc.cluster.local'
+            GITHUB_CREDS = credentials('github-credentials')
+            DOCKER_CREDS = credentials('docker-hub-credentials')
+            ARGOCD_CREDS = credentials('argocd-credentials')
+        }
+
+        stages {
+            stage('Checkout') {
+                steps {
+                    checkout scm
+                }
+            }
+
+            stage('Test') {
+                steps {
+                    container('python') {
+                        sh '''
+                            python -m pip install --upgrade pip
+                            pip install -r requirements.txt
+                            python -m pytest tests/ --junitxml=test-results.xml
+                        '''
+                    }
+                }
+            }
+
+            stage('Build Docker Image') {
+                steps {
+                    container('docker') {
+                        sh """
+                            echo "${DOCKER_CREDS_PSW}" | docker login ${DOCKER_REGISTRY} -u ${DOCKER_CREDS_USR} --password-stdin
+                            docker build -t ${DOCKER_REGISTRY}/${DOCKER_CREDS_USR}/${IMAGE_NAME}:${IMAGE_TAG} .
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_CREDS_USR}/${IMAGE_NAME}:${IMAGE_TAG}
+                        """
+                    }
+                }
+            }
+
+            stage('Update Kubernetes Manifests') {
+                steps {
+                    container('python') {
+                        sh """
+                            sed -i 's|image: .*|image: ${DOCKER_REGISTRY}/${DOCKER_CREDS_USR}/${IMAGE_NAME}:${IMAGE_TAG}|' k8s/deployment.yaml
+                        """
+                    }
+                }
+            }
+
+            stage('Deploy to Kubernetes') {
+                steps {
+                    container('kubectl') {
+                        sh """
+                            kubectl apply -f k8s/
+                        """
+                    }
+                }
+            }
+
+            stage('Sync ArgoCD') {
+                steps {
+                    container('argocd') {
+                        sh """
+                            argocd login ${ARGOCD_SERVER} --username ${ARGOCD_CREDS_USR} --password ${ARGOCD_CREDS_PSW} --insecure
+                            argocd app sync ${IMAGE_NAME}
+                            argocd app wait ${IMAGE_NAME}
+                        """
+                    }
                 }
             }
         }
 
-        stage('Build Docker Image') {
-            steps {
-                container('docker') {
-                    sh """
-                        echo "${DOCKER_CREDS_PSW}" | docker login ${DOCKER_REGISTRY} -u ${DOCKER_CREDS_USR} --password-stdin
-                        docker build -t ${DOCKER_REGISTRY}/${DOCKER_CREDS_USR}/${IMAGE_NAME}:${IMAGE_TAG} .
-                        docker push ${DOCKER_REGISTRY}/${DOCKER_CREDS_USR}/${IMAGE_NAME}:${IMAGE_TAG}
-                    """
-                }
+        post {
+            always {
+                junit 'test-results.xml'
+                cleanWs()
             }
-        }
-
-        stage('Update Kubernetes Manifests') {
-            steps {
-                container('python') {
-                    sh """
-                        sed -i 's|image: .*|image: ${DOCKER_REGISTRY}/${DOCKER_CREDS_USR}/${IMAGE_NAME}:${IMAGE_TAG}|' k8s/deployment.yaml
-                    """
-                }
+            success {
+                echo 'Pipeline succeeded!'
             }
-        }
-
-        stage('Deploy to Kubernetes') {
-            steps {
-                container('kubectl') {
-                    sh """
-                        kubectl apply -f k8s/
-                    """
-                }
+            failure {
+                echo 'Pipeline failed!'
             }
-        }
-
-        stage('Sync ArgoCD') {
-            steps {
-                container('argocd') {
-                    sh """
-                        argocd login ${ARGOCD_SERVER} --username ${ARGOCD_CREDS_USR} --password ${ARGOCD_CREDS_PSW} --insecure
-                        argocd app sync ${IMAGE_NAME}
-                        argocd app wait ${IMAGE_NAME}
-                    """
-                }
-            }
-        }
-    }
-
-    post {
-        always {
-            junit 'test-results.xml'
-            cleanWs()
-        }
-        success {
-            echo 'Pipeline succeeded!'
-        }
-        failure {
-            echo 'Pipeline failed!'
         }
     }
 }
+
+return this

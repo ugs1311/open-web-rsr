@@ -1,3 +1,21 @@
-// Load the actual Jenkinsfile from the jenkins directory
-def jenkinsfile = load 'jenkins/Jenkinsfile'
-return jenkinsfile 
+pipeline {
+    agent any
+
+    options {
+        skipDefaultCheckout()
+    }
+
+    stages {
+        stage('Load Pipeline') {
+            steps {
+                script {
+                    // Checkout the repository
+                    checkout scm
+                    
+                    // Load and execute the main pipeline
+                    def mainPipeline = load 'jenkins/Jenkinsfile'
+                }
+            }
+        }
+    }
+} 
