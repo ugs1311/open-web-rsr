@@ -160,9 +160,9 @@ jenkins:
       githubApi:
         rateLimit:
           enabled: true
-          maxRequestsPerHour: 5000
-          maxRequestsPerMinute: 30
-          maxRequestsPerSecond: 1
+          maxRequestsPerHour: 10000
+          maxRequestsPerMinute: 50
+          maxRequestsPerSecond: 5
         credentials:
           - id: "github-credentials"
             description: "GitHub API credentials" 
