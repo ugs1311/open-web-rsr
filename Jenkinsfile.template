@@ -1,0 +1,21 @@
+pipeline {
+    agent any
+
+    options {
+        skipDefaultCheckout()
+    }
+
+    stages {
+        stage('Load Template Pipeline') {
+            steps {
+                script {
+                    // Checkout the repository
+                    checkout scm
+                    
+                    // Load and execute the template pipeline
+                    def templatePipeline = load 'jenkins/templates/jenkins_cicd/Jenkinsfile'
+                }
+            }
+        }
+    }
+} 

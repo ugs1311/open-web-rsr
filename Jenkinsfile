@@ -1,21 +1,4 @@
-pipeline {
-    agent any
+@Library('jenkins-shared-library') _
 
-    options {
-        skipDefaultCheckout()
-    }
-
-    stages {
-        stage('Load Pipeline') {
-            steps {
-                script {
-                    // Checkout the repository
-                    checkout scm
-                    
-                    // Load and execute the main pipeline
-                    def mainPipeline = load 'jenkins/Jenkinsfile'
-                }
-            }
-        }
-    }
-} 
+def templatePipeline = load 'jenkins/templates/jenkins_cicd/Jenkinsfile'
+templatePipeline.call() 

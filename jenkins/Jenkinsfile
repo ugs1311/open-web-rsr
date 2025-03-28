@@ -60,7 +60,7 @@ spec:
             DOCKER_REGISTRY = 'docker.io'
             IMAGE_NAME = 'open-web-rsr'
             IMAGE_TAG = "${BUILD_NUMBER}"
-            ARGOCD_SERVER = 'argocd-server.argocd.svc.cluster.local'
+            ARGOCD_SERVER = 'https://your-argocd-server:port'
             GITHUB_CREDS = credentials('github-credentials')
             DOCKER_CREDS = credentials('docker-hub-credentials')
             ARGOCD_CREDS = credentials('argocd-credentials')
