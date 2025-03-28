@@ -1,118 +1,144 @@
-pipeline {
-    agent any
+def label = "worker-${UUID.randomUUID().toString()}"
 
-    parameters {
-        string(name: 'BRANCH_NAME', defaultValue: 'master')
-        choice(name: 'ENVIRONMENT', choices: ['dev', 'staging', 'prod'], description: 'בחר סביבת ריצה')
+pipeline {
+    agent {
+        kubernetes {
+            yaml """
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    jenkins: worker
+spec:
+  serviceAccountName: jenkins-agent
+  containers:
+  - name: python
+    image: python:3.9-slim
+    command:
+    - cat
+    tty: true
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "500m"
+      limits:
+        memory: "1Gi"
+        cpu: "1"
+  - name: docker
+    image: docker:dind
+    securityContext:
+      privileged: true
+    volumeMounts:
+    - name: docker-sock
+      mountPath: /var/run/docker.sock
+  - name: kubectl
+    image: bitnami/kubectl:latest
+    command:
+    - cat
+    tty: true
+    volumeMounts:
+    - name: kubeconfig
+      mountPath: /root/.kube
+  - name: argocd
+    image: argoproj/argocd-cli:latest
+    command:
+    - cat
+    tty: true
+  volumes:
+  - name: docker-sock
+    hostPath:
+      path: /var/run/docker.sock
+  - name: kubeconfig
+    secret:
+      secretName: kubeconfig-secret
+"""
+        }
     }
 
     environment {
-        DOCKER_IMAGE = 'open-web-rsr'
-        DOCKER_TAG = "${BUILD_NUMBER}"
-        VENV_DIR = "${WORKSPACE}/venv"
-        OLLAMA_PORT = '11010'
-        WEBUI_PORT = '5000'
+        DOCKER_REGISTRY = 'docker.io'
+        IMAGE_NAME = 'open-web-rsr'
+        IMAGE_TAG = "${BUILD_NUMBER}"
+        ARGOCD_SERVER = 'argocd-server.argocd.svc.cluster.local'
+        GITHUB_CREDS = credentials('github-credentials')
+        DOCKER_CREDS = credentials('docker-hub-credentials')
+        ARGOCD_CREDS = credentials('argocd-credentials')
     }
 
     stages {
-        stage('Clone Repository') {
+        stage('Checkout') {
             steps {
-                git(url: 'git@github.com:ugs1311/open-web-rsr.git', branch: "${params.BRANCH_NAME}")
+                checkout scm
             }
         }
 
-        stage('Setup Python Environment') {
+        stage('Test') {
             steps {
-                script {
-                    sh "python3 -m venv ${VENV_DIR}"
-                    withEnv(["VIRTUAL_ENV=${VENV_DIR}", "PATH=${VENV_DIR}/bin:${env.PATH}"]) {
-                        sh 'pip install --upgrade pip'
-                        sh 'pip install -r requirements.txt'
-                    }
+                container('python') {
+                    sh '''
+                        python -m pip install --upgrade pip
+                        pip install -r requirements.txt
+                        python -m pytest tests/ --junitxml=test-results.xml
+                    '''
                 }
             }
         }
 
-        stage('Code Quality') {
+        stage('Build Docker Image') {
             steps {
-                script {
-                    withEnv(["VIRTUAL_ENV=${VENV_DIR}", "PATH=${VENV_DIR}/bin:${env.PATH}"]) {
-                        sh 'python -m pylint --disable=C1001,C0103,C0114,W0105 *.py'
-                        sh 'python -m pytest --junitxml=test-results.xml'
-                    }
+                container('docker') {
+                    sh """
+                        echo "${DOCKER_CREDS_PSW}" | docker login ${DOCKER_REGISTRY} -u ${DOCKER_CREDS_USR} --password-stdin
+                        docker build -t ${DOCKER_REGISTRY}/${DOCKER_CREDS_USR}/${IMAGE_NAME}:${IMAGE_TAG} .
+                        docker push ${DOCKER_REGISTRY}/${DOCKER_CREDS_USR}/${IMAGE_NAME}:${IMAGE_TAG}
+                    """
                 }
             }
         }
 
-        stage('Build and Push Docker') {
-            when {
-                expression { params.ENVIRONMENT != 'dev' }
-            }
+        stage('Update Kubernetes Manifests') {
             steps {
-                script {
-                    docker.withRegistry('https://index.docker.io/v1/', credentialsId: 'docker-hub-credentials') {
-                        def image = docker.build("${DOCKER_IMAGE}:${DOCKER_TAG}", '.')
-                        image.push()
-                        image.tag("${DOCKER_IMAGE}:latest")
-                        image.push()
-                    }
+                container('python') {
+                    sh """
+                        sed -i 's|image: .*|image: ${DOCKER_REGISTRY}/${DOCKER_CREDS_USR}/${IMAGE_NAME}:${IMAGE_TAG}|' k8s/deployment.yaml
+                    """
                 }
             }
         }
 
-        stage('Deploy') {
-            when {
-                expression { params.ENVIRONMENT != 'dev' }
-            }
+        stage('Deploy to Kubernetes') {
             steps {
-                script {
-                    // כאן יש להוסיף את הלוגיקה של הדיפלוי בהתאם לסביבה
-                    echo "Deploying to ${params.ENVIRONMENT} environment"
+                container('kubectl') {
+                    sh """
+                        kubectl apply -f k8s/
+                    """
                 }
             }
         }
 
-        stage('Run Services') {
+        stage('Sync ArgoCD') {
             steps {
-                script {
-                    // הפעלת Ollama
-                    sh "ollama --model llama.bin --port ${OLLAMA_PORT} &"
-                    sleep(5) // המתנה שהשירות יעלה
-                    
-                    // הפעלת Web UI
-                    sh "opew-webui --port ${WEBUI_PORT} --llamac_host localhost --llamac_port ${OLLAMA_PORT} &"
-                    sleep(5) // המתנה שהשירות יעלה
-                    
-                    // בדיקה שהשירותים עובדים
-                    sh "curl -f http://localhost:${WEBUI_PORT}/health || exit 1"
+                container('argocd') {
+                    sh """
+                        argocd login ${ARGOCD_SERVER} --username ${ARGOCD_CREDS_USR} --password ${ARGOCD_CREDS_PSW} --insecure
+                        argocd app sync ${IMAGE_NAME}
+                        argocd app wait ${IMAGE_NAME}
+                    """
                 }
-            }
-        }
-
-        stage('Approval') {
-            when {
-                expression { params.ENVIRONMENT == 'prod' }
-            }
-            steps {
-                input(message: 'אנא אשר את הדיפלוי לסביבת הייצור')
             }
         }
     }
 
     post {
         always {
-            // ניקוי תהליכים
-            sh "pkill -f ollama || true"
-            sh "pkill -f opew-webui || true"
-            
-            // שמירת תוצאות הבדיקות
             junit 'test-results.xml'
+            cleanWs()
         }
         success {
-            echo 'התהליך הושלם בהצלחה!'
+            echo 'Pipeline succeeded!'
         }
         failure {
-            echo 'התהליך נכשל!'
+            echo 'Pipeline failed!'
         }
     }
 }
