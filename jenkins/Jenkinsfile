@@ -149,4 +149,9 @@ node('your-agent-label') {
     load 'path/to/your/script.groovy'
 }
 
+dockerNode {
+    def templatePipeline = load 'jenkins/templates/jenkins_cicd/Jenkinsfile'
+    templatePipeline.call()
+}
+
 return this
