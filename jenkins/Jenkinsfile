@@ -145,4 +145,8 @@ spec:
     }
 }
 
+node('your-agent-label') {
+    load 'path/to/your/script.groovy'
+}
+
 return this
