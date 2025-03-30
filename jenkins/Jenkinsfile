@@ -143,6 +143,8 @@ spec:
             }
         }
     }
+
+    return this
 }
 
 node('your-agent-label') {
@@ -153,5 +155,3 @@ dockerNode {
     def templatePipeline = load 'jenkins/Jenkinsfile'
     templatePipeline.call()
 }
-
-return this
