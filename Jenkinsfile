@@ -1,4 +1,4 @@
 node {
-    def templatePipeline = load 'jenkins/templates/jenkins_cicd/Jenkinsfile'
+    def templatePipeline = load 'jenkins/Jenkinsfile'
     templatePipeline.call() 
 } 
